@@ -1,136 +1,223 @@
-
-
 from qgis.PyQt5.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt5.QtGui import QIcon
 from qgis.PyQt5.QtWidgets import QAction
 from qgis.core import *
 from qgis.utils import *
 from qgis.gui import *
-
-
-
-
-# Initialize Qt resources from file resources.py
 from .resources import *
-# Import the code for the dialog
 from .lcp_dialog import LandClassificationPluginDialog
 
 import os.path
+from PyQt5.QtWidgets import QAction, QToolBar
+from qgis.core import  (QgsProcessing,
+                       QgsProcessingMultiStepFeedback, QgsProcessingOutputRasterLayer, 
+                       QgsProcessingParameterExtent, QgsProcessingParameterRasterLayer, 
+                       QgsRasterLayer, QgsVectorLayer, QgsApplication)
+from qgis.core import QgsProcessingAlgorithm
+from processing.algs.gdal.GdalAlgorithm import GdalAlgorithm
+import processing
+from osgeo import gdal
+from processing.algs.gdal.GdalUtils import GdalUtils
 
 
-class LandClassificationPlugin:
+
+pluginPath = os.path.split(os.path.split(os.path.dirname(__file__))[0])[0]
+
+class LandClassificationPlugin(GdalAlgorithm):
+    INPUT = 'INPUT'
+    EXTENT = 'PROJWIN'
+    OVERCRS = 'OVERCRS'
+    NODATA = 'NODATA'
+    OPTIONS = 'OPTIONS'
+    DATA_TYPE = 'DATA_TYPE'
+    EXTRA = 'EXTRA'
+    OUTPUT = 'OUTPUT'
+
+    
     def __init__(self, iface):
-      
-        # Save reference to the QGIS interface
+        super().__init__()
         self.iface = iface
-        # initialize plugin directory
-        self.plugin_dir = os.path.dirname(__file__)
-        # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
-        locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            'LandClassificationPlugin_{}.qm'.format(locale))
+        self.action = QAction(QIcon("E:/Development/Qgis plugin/lcp/icon2.jpg"), "Land Classification Plugin", self.iface.mainWindow())
+        self.action.triggered.connect(self.run)
+        self.action.triggered.connect(self.initAlgorithm)
+    
+    
 
-        if os.path.exists(locale_path):
-            self.translator = QTranslator()
-            self.translator.load(locale_path)
-            QCoreApplication.installTranslator(self.translator)
+    def initAlgorithm(self, config=None):
+        print("initAlgorithm is functioning!")
+        self.name = "Land Classification Plugin"
+        self.display_name = "Land Classification Plugin"
+        self.group = "Raster"
 
-        # Declare instance attributes
-        self.actions = []
-        self.menu = self.tr(u'&Land Classification Plugin')
+        self.TYPES = [self.tr('Use Input Layer Data Type'), 'Byte', 'Int16', 'UInt16', 'UInt32', 'Int32', 'Float32', 'Float64', 'CInt16', 'CInt32', 'CFloat32', 'CFloat64']
 
-        # Check if plugin was started the first time in current QGIS session
-        # Must be set in initGui() to survive plugin reloads
-        self.first_start = None
+        self.addParameter(QgsProcessingParameterRasterLayer(self.INPUT,
+                                                            self.tr('Input layer')))
+        self.addParameter(QgsProcessingParameterExtent(self.EXTENT,
+                                                       self.tr('Clipping extent')))
+        self.addParameter(QgsProcessingParameterBoolean(self.OVERCRS,
+                                                        self.tr('Override the projection for the output file'),
+                                                        defaultValue=False))
+        self.addParameter(QgsProcessingParameterNumber(self.NODATA,
+                                                       self.tr('Assign a specified nodata value to output bands'),
+                                                       type=QgsProcessingParameterNumber.Double,
+                                                       defaultValue=None,
+                                                       optional=True))
 
-    # noinspection PyMethodMayBeStatic
-    def tr(self, message):
-     
-        return QCoreApplication.translate('LandClassificationPlugin', message)
+        options_param = QgsProcessingParameterString(self.OPTIONS,
+                                                     self.tr('Additional creation options'),
+                                                     defaultValue='',
+                                                     optional=True)
+        options_param.setFlags(options_param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        options_param.setMetadata({
+            'widget_wrapper': {
+                'class': 'processing.algs.gdal.ui.RasterOptionsWidget.RasterOptionsWidgetWrapper'}})
+        self.addParameter(options_param)
 
+        dataType_param = QgsProcessingParameterEnum(self.DATA_TYPE,
+                                                    self.tr('Output data type'),
+                                                    self.TYPES,
+                                                    allowMultiple=False,
+                                                    defaultValue=0)
+        dataType_param.setFlags(dataType_param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(dataType_param)
 
-    def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None):
+        extra_param = QgsProcessingParameterString(self.EXTRA,
+                                                   self.tr('Additional command-line parameters'),
+                                                   defaultValue=None,
+                                                   optional=True)
+        extra_param.setFlags(extra_param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(extra_param)
+
+        self.addParameter(QgsProcessingParameterRasterDestination(self.OUTPUT,
+                                                                  self.tr('Clipped (extent)')))
+    
+    def name(self):
+        return 'cliprasterbyextent'
+
+    def displayName(self):
+        return self.tr('Clip raster by extent')
+
+    def group(self):
+        return self.tr('Raster extraction')
+
+    def groupId(self):
+        return 'rasterextraction'
+
+    def icon(self):
+        return QIcon(os.path.join(pluginPath, 'images', 'gdaltools', 'raster-clip.png'))
+
+    def commandName(self):
+        return "gdal_translate"
+
+                       
+    def processAlgorithm(self, parameters, context, feedback):
         
+         print("processAlgorithm is functioning!")     
+        
+         inLayer = self.parameterAsRasterLayer(parameters, self.INPUT, context)
+         bbox = self.parameterAsExtent(parameters, self.EXTENT, context, inLayer.crs())
+         override_crs = self.parameterAsBoolean(parameters, self.OVERCRS, context)
+         no_data = self.parameterAsDouble(parameters, self.NODATA, context)
+         options = self.parameterAsString(parameters, self.OPTIONS, context)
+         data_type = self.parameterAsEnum(parameters, self.DATA_TYPE, context)
+         extra = self.parameterAsString(parameters, self.EXTRA, context)
 
-        icon = QIcon(icon_path)
-        action = QAction(icon, text, parent)
-        action.triggered.connect(callback)
-        action.setEnabled(enabled_flag)
+         out_file = self.parameterAsOutputLayer(parameters, self.OUTPUT, context)
 
-        if status_tip is not None:
-            action.setStatusTip(status_tip)
+         if data_type == 0:
+             data_type = inLayer.dataProvider().dataType(1)
 
-        if whats_this is not None:
-            action.setWhatsThis(whats_this)
+         arguments = []
+         if bbox is not None:
+              arguments.append('-projwin')
+              arguments.append(str(bbox.xMinimum()))
+              arguments.append(str(bbox.yMaximum()))
+              arguments.append(str(bbox.xMaximum()))
+              arguments.append(str(bbox.yMinimum()))
 
-        if add_to_toolbar:
-            # Adds plugin icon to Plugins toolbar
-            self.iface.addToolBarIcon(action)
+         if override_crs:
+             arguments.append('-a_srs')
+             arguments.append(inLayer.crs().authid())
 
-        if add_to_menu:
-            self.iface.addPluginToMenu(
-                self.menu,
-                action)
+         if no_data is not None:
+              arguments.append('-a_nodata')
+              arguments.append(str(no_data))
 
-        self.actions.append(action)
+         if data_type:
+              arguments.append('-ot')
+              arguments.append(GdalAlgorithm.TYPES[data_type])
 
-        return action
+         if options:
+             arguments.extend(GdalUtils.parseCreationOptions(options))
 
+         if extra:
+             arguments.extend(extra.split(' '))
+
+             arguments.append(inLayer.source())
+             arguments.append(out_file)
+
+             return GdalUtils.runGdal(['gdal_translate', GdalUtils.escapeAndJoin(arguments)], feedback)
+             
+    def createInstance(self):
+             return LandClassificationPlugin()
+
+    def name(self):
+             return 'LandClassificationPlugin'
+
+    def displayName(self):
+             return 'LandClassificationPlugin'
+
+    def group(self):
+             return 'Plugins'
+
+    def groupId(self):
+         return 'Plugins'
+
+    def shortHelpString(self):
+         return 'This is a short help string for the LandClassificationPlugin algorithm'
+
+
+    def svgIconPath(self):
+         return os.path.join(pluginPath, 'icon.jpg')
+
+    def helpUrl(self):
+         return 'https://www.example.com/help'
+
+    def createUserUI(self, dialog):
+         pass
+    
     def initGui(self):
+        print("I am GUI")
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
+        self.iface.addToolBarIcon(self.action)
 
-        icon_path = ':/plugins/lcp/icon.png'
-        self.add_action(
-            icon_path,
-            text=self.tr(u'landclassification'),
-            callback=self.run,
-            parent=self.iface.mainWindow())
-
-        # will be set False in run()
-        self.first_start = True
 
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
-        for action in self.actions:
-            self.iface.removePluginMenu(
-                self.tr(u'&Land Classification Plugin'),
-                action)
-            self.iface.removeToolBarIcon(action)
+        print(" I am Unload!")
+        self.iface.removeToolBarIcon(self.action)
 
 
     def run(self):
         """Run method that performs all the real work"""
+        print("I am RUN!")
         
-        # Create the dialog with elements (after translation) and keep reference
-        # Only create GUI ONCE in callback, so that it will only load when the plugin is started
-        if self.first_start == True:
-            self.first_start = False
-            self.dlg = LandClassificationPluginDialog()
-            
-            
-
         # show the dialog
+        self.dlg = LandClassificationPluginDialog()
         self.dlg.show()
-        
         # Run the dialog event loop
         result = self.dlg.exec_()
-        #result = self.clip.exec_()
-        # See if OK was pressed
+
         if result:
-            # Do something useful here - delete the line containing pass and
-            # substitute with your code
+            print("Algorithm finished successfully!")
+
+    # show the dialog
             
-            pass
+            self.dlg = LandClassificationPluginDialog()
+            self.dlg.show()
+    # Run the dialog event loop
+            result = self.dlg.exec_()
+        else:
+             print("Algorithm failed or was canceled!")
