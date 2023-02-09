@@ -20,12 +20,28 @@ from PIL import Image
 from qgis.gui import QgsMapTool
 import torch
 import torch.nn as nn
-from lcp import load_model
+
 import torchvision.transforms as transforms
+from collections import OrderedDict
+import collections
+import pickle
+from .load_model import Generator
+
+# #imported by Mayol hehe
+# from qgis.gui import QgsMapCanvas
+# from PyQt5.QtGui import QPen
+# from PyQt5.QtGui import QBrush
+# from PyQt5.QtCore import Qt, QPointF
+# from PyQt5.QtGui import QImage, QPainter, QColor
+# from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QAction, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDialog
+# from qgis.core import QgsRasterLayer, QgsProject, QgsRectangle
+# from qgis.gui import QgsMapCanvas, QgsMapCanvasItem
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), 'lcp_dialog_base.ui'))   
+    os.path.dirname(__file__), 'lcp_dialog_base.ui'))  
+
+
 
 
 class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
@@ -35,12 +51,12 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         QtWidgets.QDialog.__init__(self)
         self.ui = FORM_CLASS()      
                 
-       
         
         self.ui.setupUi(self)
         self.ui.progressBar.setVisible(False)
         self.ui.autoCoordinates.clicked.connect(self.map_canvas)
         self.ui.classify.clicked.connect(self.classification)
+        # self.ui.drawButton.clicked.connect(self.draw_canvas)
 
     
     def map_canvas(self):
@@ -146,46 +162,48 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         iface.addRasterLayer(output_raster, "Clipped Raster")
 
     def classification(self):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+       # Load the pretrained PyTorch model
+        model = Generator()
+        checkpoint = torch.load("E:/Development/Qgis plugin/lcp/pretrained_model/gen.pth.tar", map_location=torch.device('cpu'))
+
+        # Separate the state dict and optimizer
+        model_state_dict = checkpoint["state_dict"]
+        optimizer_state_dict = checkpoint["optimizer"]
+
+        # Load the model's state dict
+        model.load_state_dict(model_state_dict)
+
         
-        model = load_model.model
+        try:
+            model.load_state_dict(torch.load("E:/Development/Qgis plugin/lcp/pretrained_model/gen.pth.tar", map_location=torch.device('cpu')))
+        except RuntimeError as e:
+            print(e)
+        model.eval()
+        print(type(model))
         print(model)
-        print(model.state_dict())
-                
-
-        x = torch.randn(1, 10)
-        y = model(x)
-        print(y)
-
         if model is not None:
-            print("Model loaded successfully")
+            print("Model successfully loaded!")
         else:
-            print("Failed to load the model")
+            print("Model Failed to load!")
 
         
         
-        """Triggered when the classify button is clicked."""
-         # Get the input image
+        # Get the input image
         input_path = self.ui.file.filePath()
         input_image = Image.open(input_path)
-        
-        # Reduce the size of the image
+
+        # Pre-process the input image
+        transform = transforms.Compose([
+            
+            transforms.Resize(256),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        ])
+        input_tensor = transform(input_image).unsqueeze(0)
+
         
 
-        # Preprocess the input image
-        # Preprocess the input image
-        input_array = np.array(input_image)
-        batch_size = 1
-        num_channels = input_array.shape[-1]
-        height = input_array.shape[0]
-        width = input_array.shape[1]
-        expected_input_shape = (batch_size, num_channels, height, width)
-        input_array = np.resize(input_array, expected_input_shape)
-
-        input_tensor = torch.Tensor(input_array)
-        # Reshape the input tensor if needed
-        input_tensor = input_tensor.view(*expected_input_shape)
-        print("Reshaped Input Tensor Shape: ", input_tensor.shape)
         pixmap = QPixmap(input_path)
         pixmap_item = QGraphicsPixmapItem(pixmap)
 
@@ -201,46 +219,41 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
 
             # Fit the view to the pixmap
         self.ui.graphicsView1.fitInView(pixmap_item, QtCore.Qt.KeepAspectRatio)
-       
 
-            
-        
-        # Use the model for inference
-        with torch.no_grad(): # turn off gradient calculation
-            output_tensor = model(input_tensor)
-        
-        output_image = output_tensor.detach().numpy()
-        
-        # Convert the output tensor to image format
-        
-        output_image = output_image.squeeze()
-        if len(output_image.shape) == 1:
-            output_image = np.expand_dims(output_image, axis=0)
+        # Run the input tensor through the model
+        with torch.no_grad():
+            output = model(input_tensor)
 
-        output_scale = np.tile([0.229, 0.224, 0.225], (output_image.shape[0], 1)) + np.tile([0.485, 0.456, 0.406], (output_image.shape[0], 1))
-        output_scale = np.tile(output_scale, (output_image.shape[0], 1))
-        output_image = output_image * output_scale
+        # Post-process the output tensor
+        output = output.detach().squeeze().clamp(-1, 1).add(1).div(2).mul(255).permute(1, 2, 0).to(torch.uint8).numpy()
+
         # Save the output image
-        output_path = "E:/Development/Qgis plugin/lcp/Output/output_image.jpg"
-        output_image.save(output_path)
+        output_image = Image.fromarray(output)
+        output_image.save("output.png")
 
-        pixmap = QPixmap(output_image)
+        # Convert the output image to a QPixmap
+        pixmap = QPixmap("output.png")
+
+        # Create a QGraphicsPixmapItem from the QPixmap
         pixmap_item = QGraphicsPixmapItem(pixmap)
 
-            # Create a QGraphicsScene and add the pixmap item to it
+        # Create a QGraphicsScene and add the pixmap item to it
         scene = QGraphicsScene()
         scene.addItem(pixmap_item)
 
-            # Set the scene rect to the pixmap size
+        # Set the scene rect to the pixmap size
         scene.setSceneRect(pixmap_item.boundingRect())
+
+        # Set the render hints for the graphics view
         self.ui.graphicsView2.setRenderHint(QPainter.Antialiasing)
         self.ui.graphicsView2.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        # Set the scene for the graphics view
         self.ui.graphicsView2.setScene(scene)
 
-            # Fit the view to the pixmap
+        # Fit the view to the pixmap
         self.ui.graphicsView2.fitInView(pixmap_item, QtCore.Qt.KeepAspectRatio)
-       
 
-            
-        
+                
+
     
