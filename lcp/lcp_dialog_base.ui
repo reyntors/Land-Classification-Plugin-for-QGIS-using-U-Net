@@ -387,13 +387,13 @@
       <enum>QgsFileWidget::GetFile</enum>
      </property>
     </widget>
-    <widget class="QGraphicsView" name="graphicsView_2">
+    <widget class="QGraphicsView" name="graphicsView2">
      <property name="geometry">
       <rect>
-       <x>280</x>
+       <x>320</x>
        <y>100</y>
-       <width>241</width>
-       <height>201</height>
+       <width>201</width>
+       <height>171</height>
       </rect>
      </property>
      <property name="styleSheet">
@@ -416,7 +416,7 @@
     <widget class="QLabel" name="label_7">
      <property name="geometry">
       <rect>
-       <x>120</x>
+       <x>110</x>
        <y>70</y>
        <width>47</width>
        <height>13</height>
@@ -429,7 +429,7 @@
     <widget class="QLabel" name="label_8">
      <property name="geometry">
       <rect>
-       <x>380</x>
+       <x>390</x>
        <y>70</y>
        <width>81</width>
        <height>21</height>
@@ -439,18 +439,67 @@
       <string>GENERATED</string>
      </property>
     </widget>
-    <widget class="QGraphicsView" name="graphicsView_3">
+    <widget class="QGraphicsView" name="graphicsView1">
      <property name="geometry">
       <rect>
        <x>20</x>
        <y>100</y>
-       <width>241</width>
-       <height>201</height>
+       <width>191</width>
+       <height>171</height>
       </rect>
      </property>
      <property name="styleSheet">
       <string notr="true">background-color: rgb(0, 135, 99);</string>
      </property>
+    </widget>
+    <widget class="QFrame" name="frame">
+     <property name="geometry">
+      <rect>
+       <x>220</x>
+       <y>170</y>
+       <width>91</width>
+       <height>71</height>
+      </rect>
+     </property>
+     <property name="styleSheet">
+      <string notr="true">background-color: rgb(0, 141, 103);</string>
+     </property>
+     <property name="frameShape">
+      <enum>QFrame::Box</enum>
+     </property>
+     <property name="frameShadow">
+      <enum>QFrame::Raised</enum>
+     </property>
+     <widget class="QPushButton" name="model">
+      <property name="geometry">
+       <rect>
+        <x>10</x>
+        <y>40</y>
+        <width>71</width>
+        <height>23</height>
+       </rect>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">background-color: rgb(190, 63, 95);
+color: rgb(255, 255, 255);</string>
+      </property>
+      <property name="text">
+       <string>PROCESS</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="label_9">
+      <property name="geometry">
+       <rect>
+        <x>30</x>
+        <y>0</y>
+        <width>31</width>
+        <height>31</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>Model</string>
+      </property>
+     </widget>
     </widget>
    </widget>
   </widget>
