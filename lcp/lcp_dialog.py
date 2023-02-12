@@ -27,15 +27,7 @@ import collections
 import pickle
 from .load_model import Generator
 
-# #imported by Mayol hehe
-# from qgis.gui import QgsMapCanvas
-# from PyQt5.QtGui import QPen
-# from PyQt5.QtGui import QBrush
-# from PyQt5.QtCore import Qt, QPointF
-# from PyQt5.QtGui import QImage, QPainter, QColor
-# from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QAction, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDialog
-# from qgis.core import QgsRasterLayer, QgsProject, QgsRectangle
-# from qgis.gui import QgsMapCanvas, QgsMapCanvasItem
+
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
@@ -196,7 +188,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         # Pre-process the input image
         transform = transforms.Compose([
             
-            transforms.Resize(256),
+            transforms.Resize((256, 256)),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
@@ -255,5 +247,6 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         self.ui.graphicsView2.fitInView(pixmap_item, QtCore.Qt.KeepAspectRatio)
 
                 
-
+        cv2.imwrite("segmented_raster.tif", output)
+        iface.addRasterLayer("segmented_raster.tif", "Segmented Raster")
     
