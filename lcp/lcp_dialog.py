@@ -1,5 +1,6 @@
 import os
-from PyQt5 import uic, QtCore
+
+from PyQt5 import uic, QtCore, QtGui
 from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QPixmap, QPainter, QImage, QColor
@@ -22,16 +23,14 @@ import torch
 import torch.nn as nn
 from PyQt5.QtWidgets import QAction
 
+
 import torchvision.transforms as transforms
 
 from .load_model import Generator
 import cv2
 from .draw_rect import RectangleAreaTool
 import pyproj
-import rasterio
-from rasterio.warp import calculate_default_transform, reproject, Resampling
-from rasterio.merge import merge
-from rasterio.mask import mask
+
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), 'lcp_dialog_base.ui'))  
@@ -55,7 +54,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         self.ui.autoCoordinates.clicked.connect(self.map_canvas)
         self.ui.drawButton.clicked.connect(self.draw_raster)
         self.ui.clip.clicked.connect(self.draw_raster)
-        self.ui.radioButton.toggled.connect(self.showHideRubberBand)
+        self.ui.File.setFilter("Image files (.png *.jpg *.tif);;PNG(.png);;JPG(.jpg);;TIFF(.tif);;All files (.)")
         self.ui.georef.clicked.connect(self.georefencing)
         self.ui.file.fileChanged.connect(self.classification)
         self.ui.model.clicked.connect(self.classification)
@@ -251,10 +250,6 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
             x1, y1 = startX, startY
             x2, y2 = endX, endY
 
-            # Convert point coordinates to UTM zone 51N (EPSG:32651)
-            start_x, start_y = pyproj.transform(wgs84, utm51n, x1, y1)
-            end_x, end_y = pyproj.transform(wgs84, utm51n, x2, y2)
-
         elif layer_crs.authid() == "EPSG:32651":
             wgs84 = pyproj.Proj(proj='latlong', datum='WGS84')
             utm51n = pyproj.Proj(proj='utm', zone=51, datum='WGS84')
@@ -276,22 +271,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
     
         iface.mapCanvas().unsetMapTool(self.clip)
         self.show()
-    
-    def showHideRubberBand(self):
-        self.action = QAction(iface.mainWindow())
-        self.canvas = iface.mapCanvas()
-        self.rectangleAreaTool = None
-
-        if self.ui.radioButton.isChecked():
-            if self.rectangleAreaTool is None:
-                 self.rectangleAreaTool = RectangleAreaTool(self.canvas, self.action)
-            if self.rectangleAreaTool is not None:
-                 self.rectangleAreaTool.rubberBand.show()
-        else:
-            if self.rectangleAreaTool is not None:
-                 self.rectangleAreaTool.rubberBand.hide()
-            
-            
+                    
     def perform_clip(self, src_ds, output_raster, xmin, xmax, ymax, xres, yres, raster_xsize, raster_ysize):
         
         
@@ -330,11 +310,12 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         src_ds = None
         dst_ds = None
 
-        self.ui.progressBar.setValue(100)
-        self.ui.progressBar.hide() 
-
         
-        pixmap = QPixmap(output_raster)
+        input_image = Image.open(output_raster)
+        input_image = input_image.resize((600, 600))
+        input_image = input_image.convert('RGB')
+        
+        pixmap = QPixmap.fromImage(QtGui.QImage(input_image.tobytes(), input_image.size[0], input_image.size[1], QtGui.QImage.Format_RGB888))
         pixmap_item = QGraphicsPixmapItem(pixmap)
 
             # Create a QGraphicsScene and add the pixmap item to it
@@ -352,17 +333,20 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
        
         iface.addRasterLayer(output_raster, "Clipped Raster" )
 
+        self.ui.progressBar.setValue(100)
+        self.ui.progressBar.hide() 
 
     
     def classification(self):
-        # Load the input raster dataset
          
         # Get the input image
         input_path = self.ui.file.filePath()
         if input_path:
+            
             input_image = Image.open(input_path)
+            input_image = input_image.resize((600, 600))
             input_image = input_image.convert('RGB')
-            pixmap = QPixmap(input_path)
+            pixmap = QPixmap.fromImage(QtGui.QImage(input_image.tobytes(), input_image.size[0], input_image.size[1], QtGui.QImage.Format_RGB888))
             pixmap_item = QGraphicsPixmapItem(pixmap)
 
                 # Create a QGraphicsScene and add the pixmap item to it
@@ -400,7 +384,9 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
 
                     model = Generator()
                     self.ui.progressBar2.setValue(1)
-                    checkpoint = torch.load("E:\Development\Qgis plugin\lcp\pretrained_model\gen.pth.tar", map_location=torch.device('cpu'))
+                    dir_path = os.path.dirname(os.path.realpath(__file__))
+                    model_path = os.path.join(dir_path, 'pre_trained model', 'gen.pth.tar')
+                    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
                     self.ui.progressBar2.setValue(20)
                     model_state_dict = checkpoint["state_dict"]
                     self.ui.progressBar2.setValue(50)
@@ -434,7 +420,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
                         
             transforms.Resize((256, 256)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
                     ])
         input_tensor = transform(input_image).unsqueeze(0)
                     
@@ -447,12 +433,32 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         output = output.detach().squeeze().clamp(-1, 1).add(1).div(2).mul(255).permute(1, 2, 0).to(torch.uint8).numpy()
 
         
-         # Save the output image
+
+        
+        
+        input_path = self.ui.file
+        line_edit = input_path.lineEdit()
+        current_file_path = line_edit.text()
+        current_directory, file_name = os.path.split(current_file_path)
+        file_path = os.path.join(current_directory, file_name)
+        current_directory = current_directory.replace('\\', '/')
+
+        #check if the output folder is present 
+        folder_name = "Output"
+
+        if os.path.exists(os.path.join(current_directory, folder_name)):
+            print("The folder exists in the directory.")
+        else:
+            print("The folder does not exist in the directory.")
+            os.makedirs(os.path.join(current_directory, folder_name))
+            print("The folder has been created.")
+
+        # Save the output image
         output_image = Image.fromarray(output)
-        output_image.save('E:/Development/Qgis plugin/lcp/Clips/Output/output.png')
+        output_image.save(current_directory+"/Output/output.png")
 
          # Convert the output image to a QPixmap
-        pixmap = QPixmap("E:/Development/Qgis plugin/lcp/Clips/Output/output.png")
+        pixmap = QPixmap(current_directory+"/Output/output.png")
 
          # Create a QGraphicsPixmapItem from the QPixmap
         pixmap_item = QGraphicsPixmapItem(pixmap)
