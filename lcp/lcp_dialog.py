@@ -5,31 +5,41 @@ from PyQt5 import QtWidgets
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QPixmap, QPainter, QImage, QColor
 from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QApplication, QMainWindow, QToolButton, QComboBox, QMessageBox, QLineEdit, QGraphicsPixmapItem, QLabel, QFileDialog, QProgressBar
-from qgis.core import  (QgsProcessing, QgsProcessingAlgorithm, 
-                       QgsProcessingMultiStepFeedback, QgsProcessingOutputRasterLayer, 
-                       QgsProcessingParameterExtent, QgsProcessingParameterRasterLayer, 
-                       QgsRasterLayer, QgsVectorLayer, QgsProject, QgsMapLayer, QgsPointXY, QgsWkbTypes, QgsPointXY, QgsAction)
+
 from qgis.PyQt.QtWidgets import QRadioButton
 import sys
 from qgis.utils import iface
 from osgeo import gdal
 import processing
-from qgis.PyQt.QtWidgets import QDialog, QDialogButtonBox
-from osgeo import gdal_array, osr
+from qgis.PyQt.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
+from osgeo import gdal
 import numpy as np
 from PIL import Image
-from qgis.gui import QgsMapTool
 import torch
 import torch.nn as nn
 from PyQt5.QtWidgets import QAction
-
-
+import numpy as np
 import torchvision.transforms as transforms
 
 from .load_model import Generator
 import cv2
 from .draw_rect import RectangleAreaTool
 import pyproj
+from PyQt5.QtWidgets import QListWidget
+from qgis.core import QgsLayout, QgsProject
+from PyQt5.QtCore import QSizeF
+from PyQt5.QtWidgets import QLabel, QApplication
+from PyQt5.QtCore import QFile
+from qgis.core import (QgsProject, QgsLayout, QgsPrintLayout, QgsReadWriteContext, 
+                       QgsLayoutItemMap, QgsLayoutPoint, QgsUnitTypes, QgsLayoutSize, 
+                       QgsLayoutItemLabel, QgsLayerTree, QgsLayoutItemLegend, QgsLayoutItemScaleBar, 
+                       QgsLayoutItemPicture, QgsLayoutExporter, QgsLayoutItemPage)
+from PyQt5.QtXml import QDomDocument
+from PyQt5.QtGui import QFont
+
+
+
+
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS, _ = uic.loadUiType(os.path.join(
@@ -47,17 +57,14 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         self.ui = FORM_CLASS()      
         self.ui.setupUi(self)
         self.ui.progressBar.setVisible(False)
-        self.ui.progressBar2.setVisible(False)
         self.ui.progressBar3.setVisible(False)
-        self.ui.progressBar2.valueChanged.connect(self.progress_changed)
-        self.ui.success.setVisible(False)
         self.ui.autoCoordinates.clicked.connect(self.map_canvas)
         self.ui.drawButton.clicked.connect(self.draw_raster)
         self.ui.clip.clicked.connect(self.draw_raster)
-        self.ui.File.setFilter("Image files (.png *.jpg *.tif);;PNG(.png);;JPG(.jpg);;TIFF(.tif);;All files (.)")
-        self.ui.georef.clicked.connect(self.georefencing)
-        self.ui.file.fileChanged.connect(self.classification)
-        self.ui.model.clicked.connect(self.classification)
+        self.ui.File.setFilter("Image files (.png *.jpg *.tif);;PNG(*.png);;JPG(*.jpg);;TIFF(*.tif);;All files (*.*)")
+        self.ui.file.fileChanged.connect(self.classification1)
+        self.ui.classify.clicked.connect(self.classification2)
+        self.ui.layout.clicked.connect(self.layout)
         
     
     def map_canvas(self):
@@ -169,9 +176,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         if output_path:
             
             output_raster = os.path.join(output_path)
-        else:
-            QMessageBox.warning(self, "Warning", "File directory not set. Please select a directory for the output raster.")
-            return
+        
 
         # Read the input raster file
         src_ds = gdal.Open(input_raster)  
@@ -292,8 +297,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
             print("SetGeoTransform is succesful!", error)                  
         dst_ds.SetProjection(src_ds.GetProjection())
         self.ui.progressBar.setValue(30)
-        
-            
+      
             # Perform the clip
         error_code = gdal.ReprojectImage(src_ds, dst_ds, src_ds.GetProjection(), dst_ds.GetProjection(), gdal.GRA_NearestNeighbour)
         self.ui.progressBar.setValue(50)
@@ -303,9 +307,6 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         else:
             print("Succesfully Reprojection", error_code)
         
-        
-        # Load the output raster
-            
         # Close the datasets
         src_ds = None
         dst_ds = None
@@ -337,7 +338,7 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
         self.ui.progressBar.hide() 
 
     
-    def classification(self):
+    def classification1(self):
          
         # Get the input image
         input_path = self.ui.file.filePath()
@@ -362,248 +363,251 @@ class LandClassificationPluginDialog(QtWidgets.QDialog, nn.Module, FORM_CLASS):
                 # Fit the view to the pixmap
             self.ui.graphicsView1.fitInView(pixmap_item, QtCore.Qt.KeepAspectRatio)
 
-            # Check if the input image has a georeferencing information
-            if not input_image:
-                print(f"Error: could not open input raster at {input_path}")
-                return
             
-            else:
-                print("Input raster is georeferenced.")
-        else:
-            QMessageBox.warning(self,"Warning", "Select a file.")
-
-        button_click = self.sender()   
-        if button_click is self.ui.model:
-            if input_path:
-                if input_image:        
-                # Load the pretrained PyTorch model
-
-                    self.ui.progressBar2.show()
-                    self.ui.progressBar2.setRange(0, 100)
-                    self.ui.progressBar2.setValue(0)
-
-                    model = Generator()
-                    self.ui.progressBar2.setValue(1)
-                    dir_path = os.path.dirname(os.path.realpath(__file__))
-                    model_path = os.path.join(dir_path, 'pre_trained model', 'gen.pth.tar')
-                    checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
-                    self.ui.progressBar2.setValue(20)
-                    model_state_dict = checkpoint["state_dict"]
-                    self.ui.progressBar2.setValue(50)
-                    optimizer_state_dict = checkpoint["optimizer"]
-                    self.ui.progressBar2.setValue(60)
-                    model.load_state_dict(model_state_dict, optimizer_state_dict)
-                    self.ui.progressBar2.setValue(70)
-                    model.eval()
-
-                    if model is not None:
-                        print("Model successfully loaded!")
-                    else:
-                        print("Model failed to load!")
-                    
-                    self.ui.progressBar2.setValue(100)
-                    self.ui.progressBar2.hide()
-                   
-            else:
-                 QMessageBox.warning(self,"Warning","Please select a file.")
-        
-           
-            self.ui.classify.clicked.connect(lambda: self.perform_classify(input_image, model))
-           
-           
-    def perform_classify(self, input_image, model):
-        self.ui.progressBar3.show()
-        self.ui.progressBar3.setRange(0, 100)
-        self.ui.progressBar3.setValue(0) 
-        # Pre-process the input image
-        transform = transforms.Compose([
-                        
-            transforms.Resize((256, 256)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-                    ])
-        input_tensor = transform(input_image).unsqueeze(0)
-                    
-         # Run the input tensor through the model
-        with torch.no_grad():
-            output = model(input_tensor)
-
-        self.ui.progressBar3.setValue(50) 
-                            # Post-process the output tensor
-        output = output.detach().squeeze().clamp(-1, 1).add(1).div(2).mul(255).permute(1, 2, 0).to(torch.uint8).numpy()
-
-        
-
-        
-        
-        input_path = self.ui.file
-        line_edit = input_path.lineEdit()
-        current_file_path = line_edit.text()
-        current_directory, file_name = os.path.split(current_file_path)
-        file_path = os.path.join(current_directory, file_name)
-        current_directory = current_directory.replace('\\', '/')
-
-        #check if the output folder is present 
-        folder_name = "Output"
-
-        if os.path.exists(os.path.join(current_directory, folder_name)):
-            print("The folder exists in the directory.")
-        else:
-            print("The folder does not exist in the directory.")
-            os.makedirs(os.path.join(current_directory, folder_name))
-            print("The folder has been created.")
-
-        # Save the output image
-        output_image = Image.fromarray(output)
-        output_image.save(current_directory+"/Output/output.png")
-
-         # Convert the output image to a QPixmap
-        pixmap = QPixmap(current_directory+"/Output/output.png")
-
-         # Create a QGraphicsPixmapItem from the QPixmap
-        pixmap_item = QGraphicsPixmapItem(pixmap)
-
-        # Create a QGraphicsScene and add the pixmap item to it
-        scene = QGraphicsScene()
-        scene.addItem(pixmap_item)
-        scene.setSceneRect(pixmap_item.boundingRect())
-        self.ui.graphicsView2.setRenderHint(QPainter.Antialiasing)
-        self.ui.graphicsView2.setRenderHint(QPainter.SmoothPixmapTransform)
-        self.ui.graphicsView2.setScene(scene)
-        self.ui.graphicsView2.fitInView(pixmap_item, QtCore.Qt.KeepAspectRatio)
-        
-        self.ui.progressBar3.setValue(100)
-        self.ui.progressBar3.hide()
-        
             
-    def progress_changed(self, value):
-        if value == 100:
-               
-            self.ui.success.setVisible(True) 
-              
-        else:
-            self.ui.success.setVisible(False)
+        
+            self.ui.classify.clicked.connect(lambda: self.classification2(input_image))
 
-    def georefencing(self):
+    def classification2(self, input_image):
+                
+            if input_image:    
+                self.ui.progressBar3.show()
+                self.ui.progressBar3.setRange(0, 100)
+                self.ui.progressBar3.setValue(0) 
 
-        self.ui.progressBar3.show()
-        self.ui.progressBar3.setRange(0, 100)
-        self.ui.progressBar3.setValue(0) 
-
-        file_widget = self.ui.file
-        self.ui.progressBar3.setValue(1) 
-        line_edit = file_widget.lineEdit()
-        self.ui.progressBar3.setValue(2) 
-        current_file_path = line_edit.text()
-        self.ui.progressBar3.setValue(3) 
-        current_directory, file_name = os.path.split(current_file_path)
-        self.ui.progressBar3.setValue(4) 
-        file_path = os.path.join(current_directory, file_name)
-        self.ui.progressBar3.setValue(5) 
-        file_path = file_path.replace('\\', '/')
-        self.ui.progressBar3.setValue(6) 
-        current_directory = current_directory.replace('\\', '/')
-        self.ui.progressBar3.setValue(7) 
-        print("Full path:", file_path)
-        self.ui.progressBar3.setValue(8) 
-
-        sgmntd_pth = current_directory + "/Output/" + os.path.splitext(file_name)[0] + "-sgmntd.tif"
-        self.ui.progressBar3.setValue(9) 
-
-        # #Resize the output
-
-        image = QImage(current_directory+"/Output/output.png")
-        self.ui.progressBar3.setValue(10) 
-        imageopen = Image.open(file_path)
-        self.ui.progressBar3.setValue(11) 
-        width, height = imageopen.size
-        self.ui.progressBar3.setValue(12) 
-        print("dimension :" ,width, height)
-        self.ui.progressBar3.setValue(13) 
-     
-
-        # Resize the image to the desired dimensions
-        new_image = image.scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        self.ui.progressBar3.setValue(14) 
-        # Save the output image to a file
-        new_image.save(current_directory+"/Output/output.png")
-        self.ui.progressBar3.setValue(15) 
-        print("Succesfully Resizing the output.jpg")
-
-        #Create a geotransform
-
-        tgt_file = file_path
-        self.ui.progressBar3.setValue(16) 
-        src_file = os.path.join(current_directory+"/Output/output.png") #ang butangan
-        self.ui.progressBar3.setValue(17) 
-        # Open the georeferenced image
-        tgt_ds = gdal.Open(tgt_file, gdal.GA_ReadOnly)
-        self.ui.progressBar3.setValue(18) 
-        if tgt_ds is None:
-            print(f"Error: could not open file {tgt_file}")
-        else:
-            # Get the extent and resolution of the target image
-            tgt_geotransform = tgt_ds.GetGeoTransform()
-            self.ui.progressBar3.setValue(19) 
-            tgt_extent = [tgt_geotransform[0], tgt_geotransform[3] + tgt_ds.RasterYSize*tgt_geotransform[5],
-                        tgt_geotransform[0] + tgt_ds.RasterXSize*tgt_geotransform[1], tgt_geotransform[3]]
-            tgt_resolution = [abs(tgt_geotransform[1]), abs(tgt_geotransform[5])]
-            self.ui.progressBar3.setValue(20) 
-
-            # Open the non-georeferenced image
-            src_ds = gdal.Open(src_file, gdal.GA_ReadOnly)
-            self.ui.progressBar3.setValue(25) 
-            if src_ds is None:
-                print(f"Could not open {src_file}")
-            else:
             
-                # Get the extent and resolution of the source image
-                src_geotransform = (tgt_extent[0], tgt_resolution[0], 0.0, tgt_extent[3], 0.0, -tgt_resolution[1])
-                self.ui.progressBar3.setValue(30) 
-                src_extent = [src_geotransform[0], src_geotransform[3] + src_ds.RasterYSize*src_geotransform[5],
-                            src_geotransform[0] + src_ds.RasterXSize*src_geotransform[1], src_geotransform[3]]
-                src_resolution = [abs(src_geotransform[1]), abs(src_geotransform[5])]
-                self.ui.progressBar3.setValue(35) 
+                model = Generator()           
+                dir_path = os.path.dirname(os.path.realpath(__file__))
+                model_path = os.path.join(dir_path, 'pre_trained model', 'gen.pth.tar')
+                checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
+                            
+                model_state_dict = checkpoint["state_dict"]
+                            
+                optimizer_state_dict = checkpoint["optimizer"]
+                            
+                model.load_state_dict(model_state_dict, optimizer_state_dict)
+                            
+                model.eval()
 
                 
 
-                # Create an output image
-                out_driver = gdal.GetDriverByName('GTiff')
-                self.ui.progressBar3.setValue(45) 
-                out_ds = out_driver.CreateCopy(sgmntd_pth, src_ds, 0)
-                self.ui.progressBar3.setValue(50) 
-                out_ds.SetGeoTransform(tgt_geotransform)
-                self.ui.progressBar3.setValue(55) 
-                out_ds.SetProjection(tgt_ds.GetProjection())
-                self.ui.progressBar3.setValue(60) 
+                self.ui.progressBar3.setValue(50)
+                        # Pre-process the input image
+                transform = transforms.Compose([
+                                        
+                            transforms.Resize((256, 256)),
+                            transforms.ToTensor(),
+                            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+                                    ])
+                input_tensor = transform(input_image).unsqueeze(0)
+                                    
+                        # Run the input tensor through the model
+                with torch.no_grad():
+                        output = model(input_tensor)
+    
+                                            # Post-process the output tensor
+                output = output.detach().squeeze().clamp(-1, 1).add(1).div(2).mul(255).permute(1, 2, 0).to(torch.uint8).numpy()
 
-                # Warp the non-georeferenced image
-                gdal.Warp(out_ds, src_ds, format='GTiff',
-                        outputBounds=tgt_extent,
-                        xRes=tgt_resolution[0],
-                        yRes=tgt_resolution[1],
-                        srcSRS='EPSG:4326',
-                        dstSRS=tgt_ds.GetProjection(),
-                        resampleAlg=gdal.GRA_Bilinear)
-                self.ui.progressBar3.setValue(70) 
+                        
+                input_path = self.ui.file
+                line_edit = input_path.lineEdit()
+                current_file_path = line_edit.text()
+                current_directory, file_name = os.path.split(current_file_path)
+                file_path = os.path.join(current_directory, file_name)
+                current_directory = current_directory.replace('\\', '/')
 
-                # Close the datasets
-                tgt_ds = None
-                src_ds = None
-                out_ds = None
+                # check if the output folder is present 
+                folder_name = "Output"
 
-        src_file = sgmntd_pth#source
-        self.ui.progressBar3.setValue(75) 
-        stc_file = os.path.join(current_directory+"/Output/output.png")#ang baguhon, ang georeferenced
-        self.ui.progressBar3.setValue(80) 
-        gdal.Translate(stc_file, src_file, options=['-ot', 'Byte', '-co', 'PHOTOMETRIC=RGB'])
-        self.ui.progressBar3.setValue(85) 
-        src_file = sgmntd_pth#source
-        stc_file = os.path.join(current_directory+"/Output/output.jpg")#ang baguhon, ang georeferenced
-        gdal.Translate(stc_file, src_file, options=['-ot', 'Byte', '-co', 'PHOTOMETRIC=RGB'])
-        self.ui.progressBar3.setValue(90) 
-        #add the layer
-        iface.addRasterLayer(sgmntd_pth, "Clipped Segmented")
+                if os.path.exists(os.path.join(current_directory, folder_name)):
+                    print("The folder exists in the directory.")
+                else:
+                    print("The folder does not exist in the directory.")
+                    os.makedirs(os.path.join(current_directory, folder_name))
 
-        self.ui.progressBar3.setValue(100)
-        self.ui.progressBar3.hide()
+                # Save the output image
+                output_image = Image.fromarray(output)
+                output_image.save(current_directory+"/Output/output.png")
+
+                # Convert the output image to a QPixmap
+                pixmap = QPixmap(current_directory+"/Output/output.png")
+
+                        # Create a QGraphicsPixmapItem from the QPixmap
+                pixmap_item = QGraphicsPixmapItem(pixmap)
+
+                        # Create a QGraphicsScene and add the pixmap item to it
+                scene = QGraphicsScene()
+                scene.addItem(pixmap_item)
+                scene.setSceneRect(pixmap_item.boundingRect())
+                self.ui.graphicsView2.setRenderHint(QPainter.Antialiasing)
+                self.ui.graphicsView2.setRenderHint(QPainter.SmoothPixmapTransform)
+                self.ui.graphicsView2.setScene(scene)
+                self.ui.graphicsView2.fitInView(pixmap_item, QtCore.Qt.KeepAspectRatio)
+                        
+                
+                #Georeferencing
+    
+                self.ui.progressBar3.setValue(80)
+            
+                file_widget = self.ui.file
+            
+                line_edit = file_widget.lineEdit()
+            
+                current_file_path = line_edit.text()
+            
+                current_directory, file_name = os.path.split(current_file_path)
+        
+                file_path = os.path.join(current_directory, file_name)
+        
+                file_path = file_path.replace('\\', '/')
+        
+                current_directory = current_directory.replace('\\', '/')
+
+            
+
+                sgmntd_pth = current_directory + "/Output/" + os.path.splitext(file_name)[0] + "-sgmntd.tif"
+        
+
+                # #Resize the output
+
+                image = QImage(current_directory+"/Output/output.png")
+            
+                imageopen = Image.open(file_path)
+            
+                width, height = imageopen.size
+        
+                print("dimension :" ,width, height)
+            
+            
+
+                # Resize the image to the desired dimensions
+                new_image = image.scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            
+                # Save the output image to a file
+                new_image.save(current_directory+"/Output/output.png")
+            
+                
+
+                #Create a geotransform
+
+                tgt_file = file_path
+        
+                src_file = os.path.join(current_directory+"/Output/output.png") #ang butangan
+            
+                # Open the georeferenced image
+                tgt_ds = gdal.Open(tgt_file, gdal.GA_ReadOnly)
+            
+                if tgt_ds is None:
+                    print(f"Error: could not open file {tgt_file}")
+                else:
+                    # Get the extent and resolution of the target image
+                    tgt_geotransform = tgt_ds.GetGeoTransform()
+                
+                    tgt_extent = [tgt_geotransform[0], tgt_geotransform[3] + tgt_ds.RasterYSize*tgt_geotransform[5],
+                                tgt_geotransform[0] + tgt_ds.RasterXSize*tgt_geotransform[1], tgt_geotransform[3]]
+                    tgt_resolution = [abs(tgt_geotransform[1]), abs(tgt_geotransform[5])]
+                
+
+                    # Open the non-georeferenced image
+                    src_ds = gdal.Open(src_file, gdal.GA_ReadOnly)
+            
+                    if src_ds is None:
+                        print(f"Could not open {src_file}")
+                    else:
+                    
+                        # Get the extent and resolution of the source image
+                        src_geotransform = (tgt_extent[0], tgt_resolution[0], 0.0, tgt_extent[3], 0.0, -tgt_resolution[1])
+                    
+                        src_extent = [src_geotransform[0], src_geotransform[3] + src_ds.RasterYSize*src_geotransform[5],
+                                    src_geotransform[0] + src_ds.RasterXSize*src_geotransform[1], src_geotransform[3]]
+                        src_resolution = [abs(src_geotransform[1]), abs(src_geotransform[5])]
+                    
+
+                        
+
+                        # Create an output image
+                        out_driver = gdal.GetDriverByName('GTiff')
+                    
+                        out_ds = out_driver.CreateCopy(sgmntd_pth, src_ds, 0)
+                
+                        out_ds.SetGeoTransform(tgt_geotransform)
+                    
+                        out_ds.SetProjection(tgt_ds.GetProjection())
+                    
+
+                        # Warp the non-georeferenced image
+                        gdal.Warp(out_ds, src_ds, format='GTiff', 
+                                outputBounds=tgt_extent,
+                                xRes=tgt_resolution[0],
+                                yRes=tgt_resolution[1],
+                                srcSRS='EPSG:4326',
+                                dstSRS=tgt_ds.GetProjection(),
+                                resampleAlg=gdal.GRA_Bilinear)
+                    
+
+                        # Close the datasets
+                        tgt_ds = None
+                        src_ds = None
+                        out_ds = None
+
+                src_file = sgmntd_pth#source
+            
+                stc_file = os.path.join(current_directory+"/Output/output.png")#ang baguhon, ang georeferenced
+            
+                gdal.Translate(stc_file, src_file, options=['-ot', 'Byte', '-co', 'PHOTOMETRIC=RGB'])
+            
+                src_file = sgmntd_pth#source
+                stc_file = os.path.join(current_directory+"/Output/output.jpg")#ang baguhon, ang georeferenced
+                gdal.Translate(stc_file, src_file, options=['-ot', 'Byte', '-co', 'PHOTOMETRIC=RGB'])
+            
+                #add the layer
+                iface.addRasterLayer(sgmntd_pth, "Clipped Segmented")
+
+                self.ui.progressBar3.setValue(100)
+                self.ui.progressBar3.hide()
+            
+    def layout(self):
+
+          # Get the current project instance
+        project = QgsProject.instance()
+        
+        # Define the page settings for the print layout
+        manager = project.layoutManager()
+        layout_name = 'My Print Layout'
+        existing_layout = manager.layoutByName(layout_name)
+        
+        if existing_layout:
+            # Remove the existing layout if it exists
+            manager.removeLayout(existing_layout)
+        
+        # Create a new print layout
+        layout = QgsPrintLayout(project)
+        layout.initializeDefaults()
+        layout.setName(layout_name)
+        pc = layout.pageCollection()
+        page = pc.pages()[0]
+        page.setPageSize('A4', QgsLayoutItemPage.Orientation.Landscape)
+        
+        # Add the new print layout to the manager
+        manager.addLayout(layout)
+
+        # Load the template file into the print layout
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        template_file = os.path.join(dir_path,'LCPTEMPLATE.qpt')
+        with open(template_file, 'rt') as f:
+            template_content = f.read()
+        document = QDomDocument()
+        document.setContent(template_content)
+        context = QgsReadWriteContext()
+        layout.loadFromTemplate(document, context)
+
+         # Get the map item from the layout
+        map_item = layout.itemById('Main Map')
+        map_item.zoomToExtent(iface.mapCanvas().extent())
+
+        # Refresh the layout to update the changes
+        layout.refresh()
+        
+        # Open the new print layout in the print composer window
+        iface.openLayoutDesigner(layout) 
+     
